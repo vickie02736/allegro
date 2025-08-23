@@ -36,9 +36,11 @@ Installing `allegro` in this way will also install the `nequip` package from PyP
 ## Usage
 
 The `allegro` package provides the Allegro model for use within the [NequIP framework](https://github.com/mir-group/nequip).
-[The framework's documentation](https://nequip.readthedocs.io) describes how  to train, test, and use models.
+[The NequIP documentation](https://nequip.readthedocs.io) describes how  to train, test, and use models.
+
 A minimal example of a config file for training an Allegro model is provided at [`configs/tutorial.yaml`](configs/tutorial.yaml) and further details can be found in the [Allegro docs](https://nequip.readthedocs.io/projects/allegro/en/latest/).
 
+Users are advised to make use of Allegro's GPU [acceleration modifiers](https://nequip.readthedocs.io/projects/allegro/en/latest/guide/accelerations.html) wherever possible to speed up training and inference, including our [CuEquivariance](https://github.com/NVIDIA/cuEquivariance) integration and our custom Triton kernels. (Note that CuEquivariance and our custom Triton kernels are mutually exclusive. Do not use them together.)
 
 ## LAMMPS Integration
 
