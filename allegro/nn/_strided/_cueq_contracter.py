@@ -77,6 +77,7 @@ class CuEquivarianceContracter(Contracter):
             allegro_tp_desc(
                 ir1, ir2, irout, self.path_channel_coupling
             ).polynomial.flatten_coefficient_modes(),
+            method="uniform_1d",
             # self.w3j is of `model_dtype`
             math_dtype=self.w3j.dtype,
         )
