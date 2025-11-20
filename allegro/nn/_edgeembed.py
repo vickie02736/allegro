@@ -5,7 +5,7 @@ from e3nn.o3._irreps import Irreps
 from e3nn.util.jit import compile_mode
 
 from nequip.data import AtomicDataDict
-from nequip.nn import GraphModuleMixin, ScalarMLPFunction
+from nequip.nn import GraphModuleMixin, ScalarMLPFunction, with_edge_type_
 
 from typing import List
 
@@ -67,14 +67,8 @@ class ProductTypeEmbedding(GraphModuleMixin, torch.nn.Module):
 
     def forward(self, data: AtomicDataDict.Type) -> AtomicDataDict.Type:
         # == embed atom types ==
-        if self.edge_type_field in data:
-            edge_types = data[self.edge_type_field]
-        else:
-            edge_types = torch.index_select(
-                data[AtomicDataDict.ATOM_TYPE_KEY].reshape(-1),
-                0,
-                data[AtomicDataDict.EDGE_INDEX_KEY].reshape(-1),
-            ).view(2, -1)
+        data = with_edge_type_(data, edge_type_field=self.edge_type_field)
+        edge_types = data[self.edge_type_field]
         type_embed = torch.cat(
             (self.center_embed(edge_types[0]), self.neighbor_embed(edge_types[1])),
             dim=-1,

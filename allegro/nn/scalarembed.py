@@ -6,7 +6,7 @@ from e3nn.o3._irreps import Irreps
 from e3nn.util.jit import compile_mode
 
 from nequip.data import AtomicDataDict
-from nequip.nn import GraphModuleMixin, SequentialGraphNetwork
+from nequip.nn import GraphModuleMixin, SequentialGraphNetwork, with_edge_type_
 from nequip.nn.embedding import PolynomialCutoff, BesselEdgeLengthEncoding
 from nequip.utils.global_dtype import _GLOBAL_DTYPE
 
@@ -156,14 +156,8 @@ class TwoBodySplineScalarEmbed(GraphModuleMixin, torch.nn.Module):
 
     def forward(self, data: AtomicDataDict.Type) -> AtomicDataDict.Type:
         # get edge_types
-        if self.edge_type_field in data:
-            edge_types = data[self.edge_type_field]
-        else:
-            edge_types = torch.index_select(
-                data[AtomicDataDict.ATOM_TYPE_KEY].reshape(-1),
-                0,
-                data[AtomicDataDict.EDGE_INDEX_KEY].reshape(-1),
-            ).view(2, -1)
+        data = with_edge_type_(data, edge_type_field=self.edge_type_field)
+        edge_types = data[self.edge_type_field]
         # convert into row-major NxN matrix index
         edge_types = edge_types[0] * self.num_types + edge_types[1]
 
