@@ -2,18 +2,18 @@
 run: [train, test]
 
 cutoff_radius: 5.0
-chemical_symbols: [C, O, H]
-model_type_names: ${chemical_symbols}
+model_type_names: [C, H, O, Cu]
+chemical_species: ${model_type_names}
 
 data:
   _target_: nequip.data.datamodule.sGDML_CCSD_DataModule
   dataset: aspirin
   data_source_dir: aspirin_data
   transforms:
+    - _target_: nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper
+      model_type_names: ${model_type_names}
     - _target_: nequip.data.transforms.NeighborListTransform
       r_max: ${cutoff_radius}
-    - _target_: nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper
-      chemical_symbols: ${chemical_symbols}
   trainval_test_subset: [40, 10]
   train_val_split: [30, 10]
   seed: 123
@@ -159,4 +159,4 @@ training_module:
     pair_potential:
       _target_: nequip.nn.pair_potential.ZBL
       units: real     # Ang and kcal/mol, LAMMPS unit names;  allowed values "metal" and "real"
-      chemical_species: ${chemical_symbols}   # must tell ZBL the chemical species of the various model atom types
+      chemical_species: ${chemical_species}   # must tell ZBL the chemical species of the various model atom types
