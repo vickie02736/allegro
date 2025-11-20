@@ -1,5 +1,5 @@
 <p align="center">
-<img src="./logo.png" width="50%" title="Allegro" alt="Allegro"/> 
+<img src="./logo.png" width="50%" title="Allegro" alt="Allegro"/>
 </p>
 
 <br/>
@@ -63,18 +63,18 @@ If you use this code in your academic work, please cite:
     > "High-performance training and inference for deep equivariant interatomic potentials." <br/>
     > https://doi.org/10.48550/arXiv.2504.16068
 
- 3. The [computational scaling paper](https://dl.acm.org/doi/abs/10.1145/3581784.3627041) that discusses optimized LAMMPS MD 
+ 3. The [computational scaling paper](https://dl.acm.org/doi/abs/10.1145/3581784.3627041) that discusses optimized LAMMPS MD
     > Albert Musaelian, Anders Johansson, Simon Batzner, and Boris Kozinsky. <br/>
     > "Scaling the leading accuracy of deep equivariant models to biomolecular simulations of realistic size." <br/>
     > In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis, pp. 1-12. 2023.
 
 And also consider citing:
- 
+
  4. The [original NequIP paper](https://www.nature.com/articles/s41467-022-29939-5)
     > Simon Batzner, Albert Musaelian, Lixin Sun, Mario Geiger, Jonathan P. Mailoa, Mordechai Kornbluth, Nicola Molinari, Tess E. Smidt, and Boris Kozinsky. <br/>
     > "E(3)-equivariant graph neural networks for data-efficient and accurate interatomic potentials." <br/>
     > Nature communications 13, no. 1 (2022): 2453
-    
+
  5. The `e3nn` equivariant neural network package used by NequIP, through its [preprint](https://arxiv.org/abs/2207.09453) and/or [code](https://github.com/e3nn/e3nn)
 
 

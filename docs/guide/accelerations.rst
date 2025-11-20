@@ -1,7 +1,7 @@
 Accelerations
 =============
 
-Allegro provides several acceleration options to optimize performance for both training and inference on GPUs. 
+Allegro provides several acceleration options to optimize performance for both training and inference on GPUs.
 Present acceleration options include our :doc:`CuEquivariance integration <cuequivariance>` or our :doc:`custom Triton kernels <triton>`, which can be activated to accelerate the Allegro tensor product.
 
 .. list-table::
@@ -25,6 +25,6 @@ Present acceleration options include our :doc:`CuEquivariance integration <cuequ
 .. toctree::
    :hidden:
    :maxdepth: 1
-    
+
    cuequivariance
    triton

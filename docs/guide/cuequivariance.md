@@ -7,7 +7,7 @@ This integration accelerates Allegro models during both training and inference.
 
 - [PyTorch](https://pytorch.org/) >= 2.6
 - CUDA-compatible GPU
-- [cuequivariance](https://github.com/NVIDIA/cuEquivariance) library installed: 
+- [cuequivariance](https://github.com/NVIDIA/cuEquivariance) library installed:
 
 ```bash
 pip install cuequivariance-torch cuequivariance-ops-torch-cu12
@@ -20,9 +20,9 @@ To enable CuEquivariance acceleration during training, use the model modifier in
 ```yaml
 training_module:
   _target_: allegro.train.EMALightningModule
-  
+
   # ... other training module configurations ...
-  
+
   model:
     _target_: nequip.model.modify
     modifiers:
