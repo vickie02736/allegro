@@ -19,7 +19,7 @@ To enable CuEquivariance acceleration during training, use the model modifier in
 
 ```yaml
 training_module:
-  _target_: allegro.train.EMALightningModule
+  _target_: nequip.train.EMALightningModule
 
   # ... other training module configurations ...
 
