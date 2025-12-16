@@ -106,16 +106,24 @@ class CuEquivarianceContracter(Contracter):
             empty_dict: Dict[int, torch.Tensor] = {}  # for torchscript
 
             if self.path_channel_coupling:
-                weights = self.weights.transpose(0, 1).reshape(1, -1)
+                weights = self.weights.transpose(0, 1).reshape(
+                    1, self.num_paths * self.mul
+                )
             else:
-                weights = self.weights.reshape(1, -1)
+                weights = self.weights.reshape(1, self.num_paths)
 
             cue_out_edges = self.cuet_sp(
                 [
                     weights,
-                    x1.transpose(1, 2).reshape(x1.size(0), -1),  # (edges, irreps * mul)
-                    x2_scatter.transpose(1, 2).reshape(
-                        scatter_dim_size, -1
+                    x1.transpose(1, 2)
+                    .contiguous()
+                    .view(
+                        x1.size(0), self.base_dim1 * self.mul
+                    ),  # (edges, irreps * mul)
+                    x2_scatter.transpose(1, 2)
+                    .contiguous()
+                    .view(
+                        scatter_dim_size, self.base_dim2 * self.mul
                     ),  # (atoms, irreps * mul)
                 ],
                 {2: idxs},  # input indices
@@ -124,9 +132,11 @@ class CuEquivarianceContracter(Contracter):
             )[0]
 
             # reshape and transpose back to (edges, mul, irreps_out)
-            return cue_out_edges.view(
-                -1, cue_out_edges.shape[-1] // self.mul, self.mul
-            ).transpose(1, 2)
+            return (
+                cue_out_edges.view(x1.size(0), self.base_dim_out, self.mul)
+                .transpose(1, 2)
+                .contiguous()
+            )
         else:
             x2 = torch.index_select(x2_scatter, 0, idxs)
             return self._contract(x1, x2)
