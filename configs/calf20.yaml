@@ -1,0 +1,192 @@
+# Allegro training config for CALF20_CO2 dataset
+# Unified CSV logging enabled via UnifiedCSVLogCallback (from NequIP)
+
+run: [train]
+
+# == Shared variables ==
+cutoff_radius: 5.0
+num_scalar_features: 64
+
+model_type_names: [H, C, N, O, Zn]
+chemical_species: ${model_type_names}
+
+monitored_metric: val0_epoch/weighted_sum
+
+# Path variables (override from command line or environment)
+train_file: /media/damoxing/che-liu-fileset/kwz/kwz-data/data/CALF20_CO2/training_data_32ads.xyz
+csv_log_dir: /media/damoxing/che-liu-fileset/kwz/kwz-data/log/Allegro/CALF20_CO2
+
+# ============
+#     DATA
+# ============
+data:
+  _target_: nequip.data.datamodule.ASEDataModule
+  seed: 456
+
+  split_dataset:
+    file_path: ${train_file}
+    train: 0.9
+    val: 0.1
+
+  transforms:
+    - _target_: nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper
+      model_type_names: ${model_type_names}
+    - _target_: nequip.data.transforms.NeighborListTransform
+      r_max: ${cutoff_radius}
+
+  train_dataloader:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 64
+    num_workers: 4
+    shuffle: true
+  val_dataloader:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 128
+    num_workers: ${data.train_dataloader.num_workers}
+  test_dataloader: ${data.val_dataloader}
+
+  stats_manager:
+    _target_: nequip.data.CommonDataStatisticsManager
+    dataloader_kwargs:
+      batch_size: 10
+    type_names: ${model_type_names}
+
+
+# =============
+#    TRAINER
+# =============
+trainer:
+  _target_: lightning.Trainer
+  accelerator: gpu
+  strategy: ddp  # multi-GPU DDP
+  enable_checkpointing: true
+  max_steps: 1000000       # step-based limit (was max_epochs: 1500)
+  max_epochs: -1            # disable epoch limit
+  val_check_interval: 500   # validate every 500 steps
+  log_every_n_steps: 10     # was 20
+
+  logger:
+    _target_: lightning.pytorch.loggers.csv_logs.CSVLogger
+    save_dir: ${hydra:runtime.output_dir}
+    name: allegro_calf20
+
+  callbacks:
+    - _target_: lightning.pytorch.callbacks.EarlyStopping
+      monitor: ${monitored_metric}
+      min_delta: 1e-3
+      patience: 20            # 20 validations = 20 x 500 = 10,000 steps
+      check_on_train_epoch_end: false
+
+    - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+      monitor: ${monitored_metric}
+      dirpath: ${hydra:runtime.output_dir}
+      filename: best
+      save_last: true
+
+    - _target_: lightning.pytorch.callbacks.LearningRateMonitor
+      logging_interval: step
+
+    # Unified CSV logging callback
+    - _target_: nequip.train.csv_log_callback.UnifiedCSVLogCallback
+      csv_log_dir: ${csv_log_dir}
+      type_names: ${model_type_names}
+      log_interval: 10         # only log every 10 steps
+
+
+# =====================
+#    TRAINING MODULE
+# =====================
+training_module:
+  _target_: nequip.train.EMALightningModule
+  ema_decay: 0.999
+
+  loss:
+    _target_: nequip.train.EnergyForceLoss
+    per_atom_energy: true
+    coeffs:
+      total_energy: 1.0
+      forces: 1.0
+
+  val_metrics:
+    _target_: nequip.train.EnergyForceMetrics
+    per_type: true
+    type_names: ${model_type_names}
+    coeffs:
+      per_atom_energy_mae: 1.0
+      forces_mae: 1.0
+      total_energy_rmse: null
+      per_atom_energy_rmse: null
+      forces_rmse: null
+
+  train_metrics:
+    _target_: nequip.train.EnergyForceMetrics
+    type_names: ${model_type_names}
+    coeffs:
+      total_energy_mae: null
+      per_atom_energy_mae: null
+      forces_mae: null
+      total_energy_rmse: null
+      per_atom_energy_rmse: null
+      forces_rmse: null
+
+  test_metrics: ${training_module.val_metrics}
+
+  optimizer:
+    _target_: torch.optim.Adam
+    lr: 0.001
+
+  lr_scheduler:
+    scheduler:
+      _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+      factor: 0.6
+      patience: 10        # 10 validations = 10 x 500 = 5000 steps
+      threshold: 0.1
+      min_lr: 1e-6
+    monitor: ${monitored_metric}
+    interval: step
+    frequency: 500         # check every 500 steps
+
+  model:
+    _target_: allegro.model.AllegroModel
+    seed: 456
+    model_dtype: float32
+    type_names: ${model_type_names}
+    r_max: ${cutoff_radius}
+
+    radial_chemical_embed:
+      _target_: allegro.nn.TwoBodyBesselScalarEmbed
+      num_bessels: 8
+      bessel_trainable: false
+      polynomial_cutoff_p: 6
+
+    radial_chemical_embed_dim: ${num_scalar_features}
+    scalar_embed_mlp_hidden_layers_depth: 1
+    scalar_embed_mlp_hidden_layers_width: ${num_scalar_features}
+    scalar_embed_mlp_nonlinearity: silu
+
+    l_max: 1
+    num_layers: 2
+    num_scalar_features: ${num_scalar_features}
+    num_tensor_features: 32
+
+    allegro_mlp_hidden_layers_depth: 1
+    allegro_mlp_hidden_layers_width: ${num_scalar_features}
+    allegro_mlp_nonlinearity: silu
+
+    parity: true
+    tp_path_channel_coupling: true
+
+    readout_mlp_hidden_layers_depth: 1
+    readout_mlp_hidden_layers_width: ${num_scalar_features}
+    readout_mlp_nonlinearity: silu
+
+    avg_num_neighbors: ${training_data_stats:num_neighbors_mean}
+    per_type_energy_shifts: ${training_data_stats:per_atom_energy_mean}
+    per_type_energy_scales: ${training_data_stats:forces_rms}
+    per_type_energy_scales_trainable: false
+    per_type_energy_shifts_trainable: false
+
+    pair_potential:
+      _target_: nequip.nn.pair_potential.ZBL
+      units: metal
+      chemical_species: ${chemical_species}
