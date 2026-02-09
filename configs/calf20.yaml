@@ -16,12 +16,17 @@ monitored_metric: val0_epoch/weighted_sum
 train_file: /media/damoxing/che-liu-fileset/kwz/kwz-data/data/CALF20_CO2/training_data_32ads.xyz
 csv_log_dir: /media/damoxing/che-liu-fileset/kwz/kwz-data/log/Allegro/CALF20_CO2
 
+# Checkpoint path for resuming / finetuning / testing (null = train from scratch)
+ckpt_path: null
+
 # ============
 #     DATA
 # ============
 data:
   _target_: nequip.data.datamodule.ASEDataModule
   seed: 456
+
+  test_file_path: []
 
   split_dataset:
     file_path: ${train_file}
@@ -58,11 +63,14 @@ data:
 trainer:
   _target_: lightning.Trainer
   accelerator: gpu
-  strategy: ddp  # multi-GPU DDP
+  strategy: auto  # override to ddp via --ddp flag in task.sh
+  devices: 1       # override to N via --ddp flag in task.sh
+  enable_progress_bar: false
   enable_checkpointing: true
   max_steps: 1000000       # step-based limit (was max_epochs: 1500)
   max_epochs: -1            # disable epoch limit
-  val_check_interval: 500   # validate every 500 steps
+  val_check_interval: null  # disable step-level val (use epoch-level instead)
+  check_val_every_n_epoch: 4  # validate every 4 epochs (~500 steps for smallest dataset)
   log_every_n_steps: 10     # was 20
 
   logger:
@@ -74,7 +82,7 @@ trainer:
     - _target_: lightning.pytorch.callbacks.EarlyStopping
       monitor: ${monitored_metric}
       min_delta: 1e-3
-      patience: 20            # 20 validations = 20 x 500 = 10,000 steps
+      patience: 20            # 20 validations = 20 x 4 = 80 epochs
       check_on_train_epoch_end: false
 
     - _target_: lightning.pytorch.callbacks.ModelCheckpoint
@@ -114,6 +122,7 @@ training_module:
     coeffs:
       per_atom_energy_mae: 1.0
       forces_mae: 1.0
+      total_energy_mae: null
       total_energy_rmse: null
       per_atom_energy_rmse: null
       forces_rmse: null
@@ -139,12 +148,12 @@ training_module:
     scheduler:
       _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
       factor: 0.6
-      patience: 10        # 10 validations = 10 x 500 = 5000 steps
+      patience: 10        # 10 validations = 10 x 4 = 40 epochs
       threshold: 0.1
       min_lr: 1e-6
     monitor: ${monitored_metric}
-    interval: step
-    frequency: 500         # check every 500 steps
+    interval: epoch
+    frequency: 4           # check every 4 epochs (aligned with check_val_every_n_epoch)
 
   model:
     _target_: allegro.model.AllegroModel

@@ -1,97 +1,84 @@
 #!/usr/bin/env bash
-# Allegro training tasks for CALF20_CO2 dataset with unified CSV logging.
-# Allegro uses NequIP for training; config uses allegro.model.AllegroModel.
-# Task 1: Train each of 7 xyz files independently (90/10 train/val split).
-# Task 2: Mixed 0ads+16ads training, then zero-shot/few-shot finetune on remaining test files.
-# Usage: ./task.sh [--ddp] [--task1] [--task2] [--task2-base] [--task2-finetune]
-#   Default (no flag): run both task1 and task2 sequentially.
-# Log dir: /media/damoxing/che-liu-fileset/kwz/kwz-data/log/Allegro
+# Allegro Task 2: Mixed base training (0ads+16ads), then zero-shot/few-shot finetune.
+# Usage: ./task2.sh [--base] [--finetune]
+#   --base       Run Phase A only (mixed 0ads+16ads base training)
+#   --finetune   Run Phase B only (zero-shot + few-shot finetune)
+#   (no flag)    Run both Phase A and Phase B sequentially
+#
+# Log dir:  kwz-data/log/Allegro/task2/
+# Ckpt dir: kwz-data/ckpt/Allegro/task2/
 
 set -e
 
 # ============================================================
-# NCCL / DDP debugging — surface hangs as errors instead of silent deadlocks
+# NCCL / DDP debugging
 # ============================================================
-export NCCL_DEBUG=INFO           # 打印详细的 NCCL 通信日志
-export NCCL_TIMEOUT=1800         # 超时从默认 30 分钟延长到 30 分钟（如果需要更长）
-export TORCH_NCCL_BLOCKING_WAIT=1  # 超时后报错而不是静默卡住
+export NCCL_DEBUG=INFO
+export NCCL_TIMEOUT=1800
+export TORCH_NCCL_BLOCKING_WAIT=1
 
 # ============================================================
-# Environment — use local source code, not installed packages
+# Environment
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 NEQ_ENV="/media/damoxing/che-liu-fileset/kwz/kwz-data/envs/neq_env"
 PYTHON="${NEQ_ENV}/bin/python"
 
-# Put local nequip & allegro source at the front of PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}/nequip:${PROJECT_ROOT}/allegro${PYTHONPATH:+:$PYTHONPATH}"
 
 CONFIG_DIR="$(cd "$SCRIPT_DIR/../configs" && pwd)"
-CONFIG_NAME="calf20"           # Hydra config name (without .yaml)
+CONFIG_NAME="calf20"
 DATA_DIR="/media/damoxing/che-liu-fileset/kwz/kwz-data/data/CALF20_CO2"
 LOG_DIR="/media/damoxing/che-liu-fileset/kwz/kwz-data/log/Allegro"
 RUNS_DIR="/media/damoxing/che-liu-fileset/kwz/kwz-data/ckpt/Allegro"
+BATCH_SIZE=64   # Allegro batch size
 
 mkdir -p "$LOG_DIR" "$RUNS_DIR"
 
 # ============================================================
 # Parse arguments
 # ============================================================
-RUN_TASK1=false
-RUN_TASK2_BASE=false
-RUN_TASK2_FT=false
+RUN_BASE=false
+RUN_FT=false
 
 for arg in "$@"; do
     case "$arg" in
-        --task1)        RUN_TASK1=true ;;
-        --task2)        RUN_TASK2_BASE=true; RUN_TASK2_FT=true ;;
-        --task2-base)   RUN_TASK2_BASE=true ;;
-        --task2-finetune) RUN_TASK2_FT=true ;;
+        --base)     RUN_BASE=true ;;
+        --finetune) RUN_FT=true ;;
     esac
 done
 
-# Default: run everything if no task flag is given
-if ! $RUN_TASK1 && ! $RUN_TASK2_BASE && ! $RUN_TASK2_FT; then
-    RUN_TASK1=true
-    RUN_TASK2_BASE=true
-    RUN_TASK2_FT=true
+# Default: run everything
+if ! $RUN_BASE && ! $RUN_FT; then
+    RUN_BASE=true
+    RUN_FT=true
 fi
 
-# DDP setup — auto-detect GPU count, use torchrun for multi-GPU
-# Override with NGPUS env var if needed (e.g. NGPUS=4 ./task.sh).
+# ============================================================
+# DDP setup — auto-detect GPU count
+# ============================================================
 NGPUS="${NGPUS:-auto}"
 if [ "$NGPUS" = "auto" ]; then
     if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
-        # Count comma-separated GPU IDs
         NGPUS=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l)
     else
         NGPUS=$(nvidia-smi -L 2>/dev/null | wc -l)
     fi
     [ "$NGPUS" -ge 1 ] 2>/dev/null || NGPUS=1
 fi
-TRAIN_SCRIPT="${PROJECT_ROOT}/nequip/nequip/scripts/train.py"
-_RUN_IDX=0   # counter to generate a unique port per invocation
 echo "GPUs detected: $NGPUS"
 
 # ============================================================
-# Helper: run nequip-train via local source (Allegro uses nequip-train with Allegro config)
-#   Multi-GPU  → torchrun (proper process spawning, no TCPStore timeout)
-#   Single GPU → plain python (no DDP overhead)
-#
-# Each invocation picks a fresh random MASTER_PORT so that
-# sequential DDP runs in a loop never collide on TIME_WAIT ports.
+# Helper: run nequip-train (multi-GPU DDP or single GPU)
+# Allegro uses nequip-train with Allegro config
 # ============================================================
 run_allegro() {
-    # All overrides are passed as positional args after the first (unused) arg
-    shift  # skip legacy config_file arg (now using --config-path/--config-name)
     if [ "$NGPUS" -gt 1 ]; then
-        # Fresh random port for every invocation to avoid TIME_WAIT conflicts
         local port
         port=$(shuf -i 29500-65000 -n1)
         export MASTER_PORT="$port"
-        _RUN_IDX=$((_RUN_IDX + 1))
-        echo "[DDP torchrun x${NGPUS}, port=$port] nequip.scripts.train --config-path=$CONFIG_DIR --config-name=$CONFIG_NAME $*"
+        echo "[DDP torchrun x${NGPUS}, port=$port] $*"
         "$PYTHON" -m torch.distributed.run \
             --standalone \
             --nproc_per_node="$NGPUS" \
@@ -103,7 +90,7 @@ run_allegro() {
             trainer.devices="$NGPUS" \
             trainer.strategy=ddp
     else
-        echo "[Single GPU] $PYTHON -m nequip.scripts.train --config-path=$CONFIG_DIR --config-name=$CONFIG_NAME $*"
+        echo "[Single GPU] nequip.scripts.train $*"
         "$PYTHON" -m nequip.scripts.train \
             --config-path="$CONFIG_DIR" \
             --config-name="$CONFIG_NAME" \
@@ -113,72 +100,49 @@ run_allegro() {
     fi
 }
 
+# Helper: run nequip-train in single-GPU mode (for eval / small finetune)
+run_allegro_single() {
+    echo "[Single GPU] nequip.scripts.train $*"
+    PYTHONUNBUFFERED=1 "$PYTHON" -m nequip.scripts.train \
+        --config-path="$CONFIG_DIR" \
+        --config-name="$CONFIG_NAME" \
+        "$@" \
+        trainer.devices=1 \
+        trainer.strategy=auto
+}
+
 # ============================================================
 # File lists
 # ============================================================
-ALL_FILES=(
-    training_data_0ads
-    training_data_2ads
-    training_data_4ads
-    training_data_8ads
-    training_data_16ads
-    training_data_24ads
-    training_data_32ads
-)
-
-TASK2_TRAIN_FILES=("training_data_0ads" "training_data_16ads")
 TASK2_TEST_FILES=("training_data_2ads" "training_data_4ads" "training_data_8ads" "training_data_24ads" "training_data_32ads")
 FEWSHOT_NFRAMES=(1 2 5 10 20 50)
 
 # ============================================================
-# Task 1: Independent training on each xyz file
-# ============================================================
-if $RUN_TASK1; then
-    echo "========== TASK 1: Independent per-file training =========="
-    for base in "${ALL_FILES[@]}"; do
-        xyz="${DATA_DIR}/${base}.xyz"
-        [ -f "$xyz" ] || { echo "SKIP: $xyz not found"; continue; }
-
-        csv_log="${LOG_DIR}/task1/${base}"
-        output_dir="${RUNS_DIR}/task1/${base}"
-        mkdir -p "$csv_log" "$output_dir"
-
-        echo "  Task1 Allegro: $base"
-        run_allegro "$CONFIG" \
-            train_file="$xyz" \
-            csv_log_dir="$csv_log" \
-            hydra.run.dir="$output_dir"
-    done
-    echo "========== TASK 1 DONE =========="
-fi
-
-# ============================================================
-# Task 2 Phase A: Mixed training (0ads + 16ads)
+# Task 2 Phase A: Mixed base training (0ads + 16ads)
 # ============================================================
 TASK2_BASE_OUTPUT="${RUNS_DIR}/task2/base_0ads_16ads"
 TASK2_BASE_LOG="${LOG_DIR}/task2/base_0ads_16ads"
 
-if $RUN_TASK2_BASE; then
+if $RUN_BASE; then
     echo "========== TASK 2 Phase A: Mixed 0ads+16ads base training =========="
     mkdir -p "$TASK2_BASE_OUTPUT" "$TASK2_BASE_LOG"
 
-    # Concatenate the two train files
     COMBINED="${TASK2_BASE_OUTPUT}/combined_0ads_16ads.xyz"
     cat "${DATA_DIR}/training_data_0ads.xyz" "${DATA_DIR}/training_data_16ads.xyz" > "$COMBINED"
-    echo "  Combined train file: $COMBINED (0ads + 16ads)"
+    echo "  Combined train file: $COMBINED"
 
-    run_allegro "$CONFIG" \
+    run_allegro \
         train_file="$COMBINED" \
         csv_log_dir="$TASK2_BASE_LOG" \
         hydra.run.dir="$TASK2_BASE_OUTPUT"
 
-    echo "  Task2 base training finished."
+    echo "========== TASK 2 Phase A DONE =========="
 fi
 
 # ============================================================
 # Task 2 Phase B: Zero-shot / Few-shot finetune on test files
 # ============================================================
-if $RUN_TASK2_FT; then
+if $RUN_FT; then
     echo "========== TASK 2 Phase B: Zero-shot / Few-shot finetune =========="
 
     # Locate the best checkpoint from base training
@@ -191,7 +155,7 @@ if $RUN_TASK2_FT; then
     fi
     if [ -z "$BEST_CKPT" ] || [ ! -f "$BEST_CKPT" ]; then
         echo "ERROR: No base model checkpoint found in $TASK2_BASE_OUTPUT"
-        echo "Please run --task2-base first."
+        echo "Please run ./task2.sh --base first."
         exit 1
     fi
     echo "  Using base checkpoint: $BEST_CKPT"
@@ -200,21 +164,21 @@ if $RUN_TASK2_FT; then
         test_xyz="${DATA_DIR}/${test_base}.xyz"
         [ -f "$test_xyz" ] || { echo "SKIP: $test_xyz not found"; continue; }
 
-        # --- Zero-shot: load checkpoint, run test only (no additional training) ---
+        # --- Zero-shot eval: single GPU, test only ---
         zs_log="${LOG_DIR}/task2/zeroshot/${test_base}"
         zs_dir="${RUNS_DIR}/task2/zeroshot/${test_base}"
         mkdir -p "$zs_log" "$zs_dir"
 
         echo "  Zero-shot eval: $test_base"
-        run_allegro "$CONFIG" \
+        run_allegro_single \
             run="[test]" \
             ckpt_path="$BEST_CKPT" \
-            "data.test_file_path=[${test_xyz}]" \
+            "data.test_file_path=[$test_xyz]" \
             csv_log_dir="$zs_log" \
             hydra.run.dir="$zs_dir" \
-            || echo "  Zero-shot eval $test_base may have returned non-zero"
+            || echo "  [WARN] Zero-shot eval $test_base returned non-zero"
 
-        # --- Few-shot finetune: load checkpoint, finetune on N frames ---
+        # --- Few-shot finetune ---
         for nframes in "${FEWSHOT_NFRAMES[@]}"; do
             ft_log="${LOG_DIR}/task2/fewshot/${test_base}/nframes_${nframes}"
             ft_dir="${RUNS_DIR}/task2/fewshot/${test_base}/nframes_${nframes}"
@@ -230,20 +194,25 @@ write('${ft_train_file}', frames[:n])
 print(f'Extracted {n} frames for few-shot finetune')
 "
 
-            echo "  Few-shot finetune: $test_base nframes=$nframes"
-            run_allegro "$CONFIG" \
+            # Compute max_steps = ceil(nframes / batch_size) for 1 epoch
+            MAX_STEPS=$("$PYTHON" -c "import math; print(math.ceil(${nframes} / ${BATCH_SIZE}))")
+            echo "  Few-shot finetune: $test_base nframes=$nframes max_steps=$MAX_STEPS"
+
+            run_allegro_single \
                 run="[train,test]" \
                 ckpt_path="$BEST_CKPT" \
                 train_file="$ft_train_file" \
-                trainer.max_steps=50000 \
+                trainer.max_steps="$MAX_STEPS" \
+                trainer.max_epochs=1 \
+                trainer.limit_val_batches=0.0 \
                 csv_log_dir="$ft_log" \
                 hydra.run.dir="$ft_dir" \
-                "data.test_file_path=[${test_xyz}]"
+                "data.test_file_path=[$test_xyz]"
 
             echo "  Few-shot finetune: $test_base nframes=$nframes finished."
         done
     done
-    echo "========== TASK 2 DONE =========="
+    echo "========== TASK 2 Phase B DONE =========="
 fi
 
-echo "All tasks finished at $(date)."
+echo "Task 2 finished at $(date)."
