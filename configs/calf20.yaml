@@ -15,6 +15,7 @@ monitored_metric: val0_epoch/weighted_sum
 # Path variables (override from command line or environment)
 train_file: /media/damoxing/che-liu-fileset/kwz/kwz-data/data/CALF20_CO2/training_data_32ads.xyz
 csv_log_dir: /media/damoxing/che-liu-fileset/kwz/kwz-data/log/Allegro/CALF20_CO2
+tensorboard_dir: null  # set via CLI to enable layer monitoring (e.g. tensorboard_dir=/path/to/tb)
 
 # Checkpoint path for resuming / finetuning / testing (null = train from scratch)
 ckpt_path: null
@@ -67,10 +68,10 @@ trainer:
   devices: 1       # override to N via --ddp flag in task.sh
   enable_progress_bar: false
   enable_checkpointing: true
-  max_steps: 1000000       # step-based limit (was max_epochs: 1500)
+  max_steps: 50000         # 50K step cap; early stopping (patience=20) handles convergence
   max_epochs: -1            # disable epoch limit
-  val_check_interval: null  # disable step-level val (use epoch-level instead)
-  check_val_every_n_epoch: 4  # validate every 4 epochs (~500 steps for smallest dataset)
+  val_check_interval: 200    # validate every 200 steps (unified across all models)
+  check_val_every_n_epoch: null  # disable epoch-level val (use step-level instead)
   log_every_n_steps: 10     # was 20
 
   logger:
@@ -82,7 +83,7 @@ trainer:
     - _target_: lightning.pytorch.callbacks.EarlyStopping
       monitor: ${monitored_metric}
       min_delta: 1e-3
-      patience: 20            # 20 validations = 20 x 4 = 80 epochs
+      patience: 20            # 20 validations x 200 steps = 4000 steps tolerance
       check_on_train_epoch_end: false
 
     - _target_: lightning.pytorch.callbacks.ModelCheckpoint
@@ -99,6 +100,15 @@ trainer:
       csv_log_dir: ${csv_log_dir}
       type_names: ${model_type_names}
       log_interval: 10         # only log every 10 steps
+
+    # Diagnostic per-layer TensorBoard monitoring (only active when tensorboard_dir is set)
+    - _target_: nequip.train.callbacks.layer_monitor_callback.LayerMonitorCallback
+      log_dir: ${tensorboard_dir}
+      log_freq: 100
+
+    # CO2 vs framework group metrics
+    - _target_: nequip.train.callbacks.co2_metrics_callback.CO2MetricsCallback
+      csv_log_dir: ${csv_log_dir}
 
 
 # =====================
@@ -148,12 +158,12 @@ training_module:
     scheduler:
       _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
       factor: 0.6
-      patience: 10        # 10 validations = 10 x 4 = 40 epochs
+      patience: 10        # 10 validations x 200 steps = 2000 steps tolerance
       threshold: 0.1
       min_lr: 1e-6
     monitor: ${monitored_metric}
-    interval: epoch
-    frequency: 4           # check every 4 epochs (aligned with check_val_every_n_epoch)
+    interval: step
+    frequency: 200         # check every 200 steps (aligned with val_check_interval)
 
   model:
     _target_: allegro.model.AllegroModel
